@@ -2,25 +2,11 @@
 standard library
 '''
 import hashlib
-import random
-import string
-import json
-import binascii
-import numpy as np
-import pandas as pd
-import pylab as pl
-import logging
 import datetime
-import collections
-
-'''
-Install pycryptodome instead of pycrypto
-'''
-import Crypto
-import Crypto.Random
-from Crypto.Hash import SHA
-from Crypto.PublicKey import RSA
-from Crypto.Signature import PKCS1_v1_5
+import json
+from uuid import uuid4
+from urllib.parse import urlparse
+import flask
 
 
 transactions = []
@@ -28,119 +14,159 @@ TPCoins = []
 last_block_hash = ""
 
 
-class Client:
+class Blockchain:
     def __init__(self):
-        random = Crypto.Random.new()
-        self._private_key = RSA.generate(1024, random.read)
-        self._public_key = self._private_key.publickey()
-        self._signer = PKCS1_v1_5.new(self._private_key)
+        self.chain = []
+        self.current_transactions = []
+        self.nodes = set()
+        self.create_block(proof=1, previous_hash='0')
+
+    @staticmethod
+    def hash(block):
+        # hashes a block
+        # also make sure that the transactions are ordered otherwise we will have insonsistent hashes!
+        block_string = json.dumps(block, sort_keys=True).encode()
+        return hashlib.sha256(block_string).hexdigest()
+
+    def create_block(self, proof, previous_hash):
+        new_block = {
+            'index': len(self.chain)+1,
+            'timestamp': str(datetime.datetime.now()),
+            'previous_hash': previous_hash or self.hash(self.chain[-1]),
+            'transactions': self.current_transactions,
+            'proof': proof
+        }
+        self.current_transactions = []
+        self.chain.append(new_block)
+        return new_block
+
+    def get_last_block(self):
+        return self.chain[-1]
 
     @property
-    def identity(self):
-        return binascii.hexlify(self._public_key.exportKey(format='DER')).decode('ascii')
+    def last_block(self):
+        # returns last block in the chain
+        return self.chain[-1]
 
+    def new_transaction(self, sender, recipient, amount):
+        # adds a new transaction into the list of transactions
+        # these transactions go into the next mined block
+        self.current_transactions.append({
+            "sender": sender,
+            "recient": recipient,
+            "data": amount,
+        })
+        return int(self.last_block['index'])+1
 
-class Transaction:
-    def __init__(self, sender, recipient, value):
-        self.sender = sender
-        self.recipient = recipient
-        self.value = value
-        self.time = datetime.datetime.now()
+    def proof_of_work(self, last_proof):
+        # simple proof of work algorithm
+        # find a number p' such as hash(pp') containing leading 4 zeros where p is the previous p'
+        # p is the previous proof and p' is the new proof
+        proof = 0
+        while self.validate_proof(last_proof, proof) is False:
+            proof += 1
+        return proof
 
-    def to_dict(self):
-        identity = self.sender.identity
+    @staticmethod
+    def validate_proof(last_proof, proof):
+        # validates the proof: does hash(last_proof, proof) contain 4 leading zeroes?
+        guess = f'{last_proof}{proof}'.encode()
+        guess_hash = hashlib.sha256(guess).hexdigest()
+        return guess_hash[:4] == "0000"
 
-        return collections.OrderedDict({
-            'sender': identity,
-            'recipient': self.recipient,
-            'value': self.value,
-            'time': self.time})
+    def register_node(self, address):
+        # add a new node to the list of nodes
+        parsed_url = urlparse(address)
+        self.nodes.add(parsed_url.netloc)
 
-    def sign_transaction(self):
-        private_key = self.sender._private_key
-        signer = PKCS1_v1_5.new(private_key)
-        h = SHA.new(str(self.to_dict()).encode('utf8'))
-        return binascii.hexlify(signer.sign(h)).decode('ascii')
-
-
-class Block:
-    def __init__(self):
-        self.verified_transactions = []
-        self.previous_block_hash = ""
-        self.Nonce = ""
-
-    def __init__(self, index, transactions, timestamp, previous_hash, nonce=0):
-        self.index = index
-        self.transactions = transactions
-        self.timestamp = timestamp
-        self.previous_hash = previous_hash
-        self.nonce = nonce
+    def full_chain(self):
+        # xxx returns the full chain and a number of blocks
+        pass
         
 
-def sha256(message):
-   return hashlib.sha256(message.encode('ascii')).hexdigest()
+# initiate the node
+app = Flask(__name__)
+# generate a globally unique address for this node
+node_identifier = str(uuid4()).replace('-', '')
+# initiate the Blockchain
+blockchain = BlockChain()
+
+@app.route('/mine', methods=['GET'])
+def mine():
+
+    # first we need to run the proof of work algorithm to calculate the new proof..
+    last_block = blockchain.last_block
+    last_proof = last_block['proof']
+    proof = blockchain.proof_of_work(last_proof)
+
+    # we must recieve reward for finding the proof in form of receiving 1 Coin
+    blockchain.new_transaction(
+        sender=0,
+        recipient=node_identifier,
+        amount=1,
+    )
+
+    # forge the new block by adding it to the chain
+    previous_hash = blockchain.hash(last_block)
+    block = blockchain.new_block(proof, previous_hash)
+
+    response = {
+        'message': "Forged new block.",
+        'index': block['index'],
+        'transactions': block['transactions'],
+        'proof': block['proof'],
+        'previous_hash': block['previous_hash'],
+    }
+    return jsonify(response, 200)
+
+@app.route('/transaction/new', methods=['GET'])
+def new_transaction():
+
+    values = request.get_json()
+    required = ['sender', 'recipient', 'amont']
+
+    if not all(k in values for k in required):
+        return 'Missing values.', 400
+
+    # create a new transaction
+    index = blockchain.new_transaction(
+        sender = values['sender'],
+        recipient = values['recipient'],
+        amount = values['amount']
+    )
+
+    response = {
+        'message': f'Transaction will be added to the Block {index}',
+    }
+    return jsonify(response, 200)
+
+@app.route('/chain', methods=['GET'])
+def full_chain():
+    response = {
+        'chain': blockchain.chain,
+        'length': len(blockchain.chain),
+    }
+    return jsonify(response), 200
+
+@app.route('/nodes/register', methods=['POST'])
+def register_nodes():
+    values = request.get_json()
+
+    print('values',values)
+    nodes = values.get('nodes')
+    if nodes is None:
+        return "Error: Please supply a valid list of nodes", 400
+
+    # register each newly added node
+    for node in nodes: blockchain.register_node(node)
+
+    response = {
+        'message': "New nodes have been added",
+        'all_nodes': list(blockchain.nodes),
+    }
+
+    return jsonify(response), 201
 
 
-def display_transaction(transaction):
-   #for transaction in transactions:
-   dict = transaction.to_dict()
-   print ("sender: " + dict['sender'])
-   print ('-----')
-   print ("recipient: " + dict['recipient'])
-   print ('-----')
-   print ("value: " + str(dict['value']))
-   print ('-----')
-   print ("time: " + str(dict['time']))
-   print ('-----')
-
-
-def blockchain (self):
-        print ("Number of blocks in the chain: " + str(len (self)))
-        for x in range (len(TPCoins)):
-            block_temp = TPCoins[x]
-            print ("block # " + str(x))
-            for transaction in block_temp.verified_transactions:
-                display_transaction (transaction)
-                print ('--------------')
-            print ('=====================================')
-
-
-def mine(message, difficulty=1):
-   assert difficulty >= 1
-   prefix = '1' * difficulty
-   for i in range(1000):
-      digest = sha256(str(hash(message)) + str(i))
-      if digest.startswith(prefix):
-         print ("after " + str(i) + " iterations found nonce: "+ digest)
-      return digest
-
-
-
-
-
-def main():
-
-   # Two 2 client
-   Dinesh = Client()
-   Ramesh = Client()
-   # print (Dinesh.identity)
-
-   # First transaction made
-   t0 = Transaction(
-      Dinesh,
-      Ramesh.identity,
-      5.0
-   )
-
-   block0 = Block()
-
-   block0.previous_block_hash = None
-   Nonce = None
-   block0.verified_transactions.append(t0)
-
-   digest = hash(block0)
-   last_block_hash = digest
-
-
-if __name__ == "__main__":
-   main()
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
