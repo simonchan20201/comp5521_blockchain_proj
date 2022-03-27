@@ -6,8 +6,7 @@ import datetime
 import json
 from uuid import uuid4
 from urllib.parse import urlparse
-import flask
-
+from flask import Flask, jsonify, request
 
 transactions = []
 TPCoins = []
@@ -89,7 +88,7 @@ app = Flask(__name__)
 # generate a globally unique address for this node
 node_identifier = str(uuid4()).replace('-', '')
 # initiate the Blockchain
-blockchain = BlockChain()
+blockchain = Blockchain()
 
 @app.route('/mine', methods=['GET'])
 def mine():
