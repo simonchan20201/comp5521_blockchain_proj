@@ -29,7 +29,7 @@ class Blockchain:
 
     def create_block(self, proof, previous_hash):
         new_block = {
-            'index': len(self.chain)+1,
+            'index': len(self.chain) + 1,
             'timestamp': str(datetime.datetime.now()),
             'previous_hash': previous_hash or self.hash(self.chain[-1]),
             'transactions': self.current_transactions,
@@ -55,7 +55,7 @@ class Blockchain:
             "recient": recipient,
             "data": amount,
         })
-        return int(self.last_block['index'])+1
+        return int(self.last_block['index']) + 1
 
     def proof_of_work(self, last_proof):
         # simple proof of work algorithm
@@ -81,7 +81,7 @@ class Blockchain:
     def full_chain(self):
         # xxx returns the full chain and a number of blocks
         pass
-        
+
 
 # initiate the node
 app = Flask(__name__)
@@ -90,15 +90,15 @@ node_identifier = str(uuid4()).replace('-', '')
 # initiate the Blockchain
 blockchain = Blockchain()
 
+
 @app.route('/mine', methods=['GET'])
 def mine():
-
     # first we need to run the proof of work algorithm to calculate the new proof..
     last_block = blockchain.last_block
     last_proof = last_block['proof']
     proof = blockchain.proof_of_work(last_proof)
 
-    # we must recieve reward for finding the proof in form of receiving 1 Coin
+    # we must receive reward for finding the proof in form of receiving 1 Coin
     blockchain.new_transaction(
         sender=0,
         recipient=node_identifier,
@@ -107,7 +107,7 @@ def mine():
 
     # forge the new block by adding it to the chain
     previous_hash = blockchain.hash(last_block)
-    block = blockchain.new_block(proof, previous_hash)
+    block = blockchain.create_block(proof, previous_hash)
 
     response = {
         'message': "Forged new block.",
@@ -118,26 +118,27 @@ def mine():
     }
     return jsonify(response, 200)
 
+
 @app.route('/transaction/new', methods=['GET'])
 def new_transaction():
-
     values = request.get_json()
-    required = ['sender', 'recipient', 'amont']
+    required = ['sender', 'recipient', 'amount']
 
     if not all(k in values for k in required):
         return 'Missing values.', 400
 
     # create a new transaction
     index = blockchain.new_transaction(
-        sender = values['sender'],
-        recipient = values['recipient'],
-        amount = values['amount']
+        sender=values['sender'],
+        recipient=values['recipient'],
+        amount=values['amount']
     )
 
     response = {
         'message': f'Transaction will be added to the Block {index}',
     }
     return jsonify(response, 200)
+
 
 @app.route('/chain', methods=['GET'])
 def full_chain():
@@ -147,17 +148,19 @@ def full_chain():
     }
     return jsonify(response), 200
 
+
 @app.route('/nodes/register', methods=['POST'])
 def register_nodes():
     values = request.get_json()
 
-    print('values',values)
+    print('values', values)
     nodes = values.get('nodes')
     if nodes is None:
         return "Error: Please supply a valid list of nodes", 400
 
     # register each newly added node
-    for node in nodes: blockchain.register_node(node)
+    for node in nodes:
+        blockchain.register_node(node)
 
     response = {
         'message': "New nodes have been added",
